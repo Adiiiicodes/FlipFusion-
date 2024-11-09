@@ -12,6 +12,7 @@ from pdf2image import convert_from_path
 import tabula
 import time  # For simulating long operations (remove in production)
 import webbrowser 
+import PyPDF2  # For handling PDF password setting and text search
 
 # Set the Tesseract executable path for Windows
 pytesseract.pytesseract.tesseract_cmd = r'C:\Users\HP\scoop\apps\tesseract\current\tesseract.exe'  # Update with your Tesseract path
@@ -62,6 +63,71 @@ def pdf_to_excel(pdf_file, output_path, progress_var):
     except Exception as e:
         print(f"An error occurred while converting to Excel: {str(e)}")
 
+# Function to set a password for a PDF
+def set_pdf_password(input_pdf_path, output_pdf_path, password):
+    try:
+        with open(input_pdf_path, 'rb') as input_pdf_file:
+            reader = PyPDF2.PdfReader(input_pdf_file)
+            writer = PyPDF2.PdfWriter()
+
+            # Add all pages to the writer
+            for page in reader.pages:
+                writer.add_page(page)
+
+            # Set the password on the output file
+            writer.encrypt(password)
+
+            # Write the encrypted PDF to the output file
+            with open(output_pdf_path, 'wb') as output_pdf_file:
+                writer.write(output_pdf_file)
+
+        return True
+    except Exception as e:
+        print(f"Error setting password: {e}")
+        return False
+
+# Function to search for text in a PDF
+def search_text_in_pdf(pdf_path, search_text):
+    try:
+        with open(pdf_path, 'rb') as file:
+            reader = PyPDF2.PdfReader(file)
+            found_text = []
+
+            # Search through each page of the PDF
+            for page_num, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if page_text and search_text.lower() in page_text.lower():
+                    found_text.append(f"Found on page {page_num + 1}")
+
+            return "\n".join(found_text) if found_text else "Text not found."
+
+    except Exception as e:
+        print(f"Error searching text: {e}")
+        return None
+
+# Function to convert PDF to images using PyMuPDF (fitz)
+def pdf_to_images_with_fitz(pdf_file, output_folder):
+    try:
+        # Open the PDF file
+        pdf_document = fitz.open(pdf_file)
+
+        # Iterate through each page of the PDF
+        for page_num in range(pdf_document.page_count):
+            page = pdf_document.load_page(page_num)
+
+            # Render page as an image (pixmap)
+            pix = page.get_pixmap()
+
+            # Save the image
+            output_image_path = f"{output_folder}/page_{page_num + 1}.png"
+            pix.save(output_image_path)
+
+        return True
+    except Exception as e:
+        print(f"Error converting PDF to images: {e}")
+        return False
+
+# GUI for PDF Utility
 class PDFUtilityGUI:
     def __init__(self, master):
         self.master = master
@@ -145,121 +211,74 @@ class PDFUtilityGUI:
         link_label.bind("<Button-1>", self.open_link)
 
     def open_link(self, event):
-        webbrowser.open("https://www.linkedin.com/in/aditya-nalawade-a4b081297?utm_source=share&utm_campaign=share_via&utm_content=profile&utm_medium=android_app")
+        webbrowser.open("https://www.linkedin.com/in/aditya-nalawade-a4b081297?utm_source=share&utm_medium=member_desktop")
 
     def open_link2(self, event):
-        webbrowser.open("https://github.com/Adiiiicodes")
+        webbrowser.open("https://github.com/aditya-nalawade")
 
     def open_link3(self, event):
-        webbrowser.open("adityacodes8@gmail.com")
+        webbrowser.open("mailto:nalawadeaditya01@gmail.com")
 
 
     def browse_files(self):
-        if self.operation.get() in ["extract", "convert_word", "convert_excel", "set_password", "search_text"]:
-            files = filedialog.askopenfilename(filetypes=[("PDF Files", "*.pdf")])
-        else:
-            files = filedialog.askopenfilenames(filetypes=[("PDF Files", "*.pdf")])
-
-        if isinstance(files, str):  # Single file for extract, convert to Word, Excel, set password, or search text
-            self.selected_files = [files] if files else []
-        else:  # Multiple files for merge or convert to images
-            self.selected_files = list(files)
-
-        num_files = len(self.selected_files)
-        self.file_label.config(text=f"{num_files} file{'s' if num_files != 1 else ''} selected")
+        file_paths = filedialog.askopenfilenames(filetypes=[("PDF files", "*.pdf")])
+        if file_paths:
+            self.selected_files = file_paths
+            self.file_label.config(text=f"{len(file_paths)} file(s) selected")
 
     def process(self):
+        operation = self.operation.get()
         if not self.selected_files:
-            messagebox.showerror("Error", "Please select PDF file(s).")
+            messagebox.showerror("Error", "Please select a PDF file")
             return
 
-        self.status_var.set("Processing...")
-        self.master.update_idletasks()
-        self.progress_var.set(0)  # Reset progress bar
+        # Initialize variables
+        progress_var = self.progress_var
+        output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")])
+        output_folder = filedialog.askdirectory()
 
+        # Process based on operation
         try:
-            if self.operation.get() == "extract":
-                text = extract_text_ocr(self.selected_files[0])
-                self.show_extracted_text(text)
-            elif self.operation.get() == "merge":
-                if len(self.selected_files) < 2:
-                    messagebox.showerror("Error", "Please select at least two PDF files to merge.")
-                    return
-                self.select_merge_order()
-            elif self.operation.get() == "convert_images":
-                output_folder = filedialog.askdirectory()
-                if output_folder:
-                    for pdf_file in self.selected_files:
-                        pdf_to_images_with_fitz(pdf_file, output_folder)
-                    messagebox.showinfo("Success", "PDF pages converted to images successfully.")
-            elif self.operation.get() == "convert_word":
-                output_path = filedialog.asksaveasfilename(defaultextension=".docx", filetypes=[("Word Files", "*.docx")])
-                if output_path:
-                    pdf_to_word(self.selected_files[0], output_path, self.progress_var)
-                    messagebox.showinfo("Success", f"Converted to Word successfully. Saved as {output_path}")
-            elif self.operation.get() == "convert_excel":
-                output_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")])
-                if output_path:
-                    pdf_to_excel(self.selected_files[0], output_path, self.progress_var)
-                    messagebox.showinfo("Success", f"Converted to Excel successfully. Saved as {output_path}")
-            elif self.operation.get() == "set_password":
-                password = simpledialog.askstring("Password", "Enter a password to protect the PDF:", show='*')
-                if password:
-                    output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
-                    if output_path:
-                        set_pdf_password(self.selected_files[0], output_path, password)
-                        messagebox.showinfo("Success", f"Password set successfully. Saved as {output_path}")
-            elif self.operation.get() == "search_text":
-                search_text = simpledialog.askstring("Search Text", "Enter text to search for:")
-                if search_text:
-                    results = search_text_in_pdf(self.selected_files[0], search_text)
-                    self.show_search_results(results)
+            if operation == "extract":
+                output_text = extract_text_ocr(self.selected_files[0])
+                self.status_var.set("Text extracted successfully!")
+                with open(output_path, "w") as output_file:
+                    output_file.write(output_text)
+
+            elif operation == "merge":
+                merge_pdfs(self.selected_files, output_path, progress_var)
+                self.status_var.set(f"PDFs merged successfully!")
+
+            elif operation == "convert_images":
+                success = pdf_to_images_with_fitz(self.selected_files[0], output_folder)
+                if success:
+                    self.status_var.set(f"Converted PDF to images successfully!")
+
+            elif operation == "convert_word":
+                pdf_to_word(self.selected_files[0], output_path, progress_var)
+                self.status_var.set(f"Converted PDF to Word successfully!")
+
+            elif operation == "convert_excel":
+                pdf_to_excel(self.selected_files[0], output_path, progress_var)
+                self.status_var.set(f"Converted PDF to Excel successfully!")
+
+            elif operation == "set_password":
+                password = simpledialog.askstring("Password", "Enter password:")
+                if set_pdf_password(self.selected_files[0], output_path, password):
+                    self.status_var.set("Password set successfully!")
+
+            elif operation == "search_text":
+                search_text = simpledialog.askstring("Search", "Enter text to search:")
+                result = search_text_in_pdf(self.selected_files[0], search_text)
+                if result:
+                    messagebox.showinfo("Search Result", result)
+                    self.status_var.set("Text search completed!")
+
         except Exception as e:
-            messagebox.showerror("Error", str(e))
-        finally:
-            self.status_var.set("Ready")
-            self.progress_var.set(100)  # Ensure progress bar shows completion
+            self.status_var.set(f"Error: {str(e)}")
 
-    def select_merge_order(self):
-        merge_window = Toplevel(self.master)
-        merge_window.title("Select Order of Files")
-        merge_window.geometry("800x600")
 
-        listbox = Listbox(merge_window, selectmode='multiple', height=20, width=100)
-        for file in self.selected_files:
-            listbox.insert(tk.END, file)
-        listbox.pack(pady=25)
-
-        confirm_button = ttk.Button(merge_window, text="Confirm Order", command=lambda: self.merge_selected_order(listbox.get(0, tk.END), merge_window))
-        confirm_button.pack(pady=20)
-
-    def merge_selected_order(self, selected_files, window):
-        output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF Files", "*.pdf")])
-        if output_path:
-            self.progress_var.set(0)
-            merge_pdfs(selected_files, output_path, self.progress_var)
-            messagebox.showinfo("Success", f"PDFs merged successfully. Saved as {output_path}")
-            window.destroy()
-
-    def show_extracted_text(self, text):
-        text_window = Toplevel(self.master)
-        text_window.title("Extracted Text")
-        text_window.geometry("600x400")
-
-        text_area = scrolledtext.ScrolledText(text_window, wrap=tk.WORD)
-        text_area.insert(tk.END, text)
-        text_area.pack(fill=BOTH, expand=True)
-
-    def show_search_results(self, results):
-        result_window = Toplevel(self.master)
-        result_window.title("Search Results")
-        result_window.geometry("600x400")
-
-        text_area = scrolledtext.ScrolledText(result_window, wrap=tk.WORD)
-        text_area.insert(tk.END, results)
-        text_area.pack(fill=BOTH, expand=True)
-
-if __name__ == "__main__":
-    root = ttk.Window()
-    app = PDFUtilityGUI(root)
-    root.mainloop()
+# Run the application
+root = ttk.Window(themename="darkly")
+app = PDFUtilityGUI(root)
+root.mainloop()
